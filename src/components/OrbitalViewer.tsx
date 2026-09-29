@@ -506,6 +506,9 @@ export function OrbitalViewer() {
 
       {!cardMode ? (
         <header className="app-chrome" aria-label="OrbitalView">
+          <span className="ov-build" aria-hidden="true">
+            js5
+          </span>
           <h1 className="app-title">OrbitalView</h1>
         </header>
       ) : null}
