@@ -35,23 +35,6 @@
   pointer-events: none;
 }
 
-.ov-build {
-  position: absolute;
-  left: max(0.35rem, env(safe-area-inset-left, 0px));
-  top: 50%;
-  transform: translateY(-50%);
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 10px;
-  line-height: 1;
-  color: rgba(244, 247, 251, 0.5);
-  pointer-events: none;
-  white-space: nowrap;
-}
-
-.ov-build::after {
-  content: " css5p";
-}
-
 .app-title {
   margin: 0;
   font-family: var(--font-michroma), "Michroma", system-ui, sans-serif;
