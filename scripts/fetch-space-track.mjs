@@ -186,20 +186,17 @@ function parseEnv(text) {
 }
 
 async function loadCredentials() {
-  let text;
+  let env = {};
   try {
-    text = await readFile(ENV_PATH, "utf8");
+    env = parseEnv(await readFile(ENV_PATH, "utf8"));
   } catch {
-    throw new Error(
-      "Missing .env.space-track. Add SPACE_TRACK_IDENTITY and SPACE_TRACK_PASSWORD there.",
-    );
+    env = {};
   }
-  const env = parseEnv(text);
-  const identity = env.SPACE_TRACK_IDENTITY || "";
-  const password = env.SPACE_TRACK_PASSWORD || "";
+  const identity = process.env.SPACE_TRACK_IDENTITY || env.SPACE_TRACK_IDENTITY || "";
+  const password = process.env.SPACE_TRACK_PASSWORD || env.SPACE_TRACK_PASSWORD || "";
   if (!identity || !password || identity.startsWith("your-")) {
     throw new Error(
-      "Fill in SPACE_TRACK_IDENTITY and SPACE_TRACK_PASSWORD in .env.space-track, then run this again.",
+      "Set SPACE_TRACK_IDENTITY and SPACE_TRACK_PASSWORD in .env.space-track or the environment.",
     );
   }
   return { identity, password };
@@ -551,11 +548,13 @@ async function main() {
 
   for (const group of GROUPS) {
     const satellites = buckets.get(group.id);
-    const path = join(GROUP_DIR, `${cacheKey(group.group)}-fallback.json`);
-    assertScratch(path);
-    await writeFile(path, JSON.stringify({ fetchedAt, satellites }));
-
     const current = await liveIds(group.group);
+    const body = JSON.stringify({ fetchedAt, satellites });
+    const scratchPath = join(GROUP_DIR, `${cacheKey(group.group)}-fallback.json`);
+    assertScratch(scratchPath);
+    await writeFile(scratchPath, body);
+    await writeFile(join(LIVE_DIR, `${cacheKey(group.group)}-fallback.json`), body);
+
     const next = new Set(satellites.map((satellite) => satellite.id));
     let both = 0;
     for (const id of next) if (current.has(id)) both += 1;

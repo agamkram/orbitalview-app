@@ -1,6 +1,5 @@
-# Daily catalog bake. GitHub runners replace the laptop morning fetch
-# (`npm run fetch:sats`). Vercel deploys from main when the nine
-# public/data *-fallback.json files change.
+# Daily catalog bake. GitHub runners run `npm run fetch:space-track`.
+# Vercel deploys from main when the public/data catalog files change.
 #
 # Daily kickoff ~9:23 America/New_York (staggered after Heat at 9:17;
 # after FR PI ~8:45). Odd minute to reduce Actions :00/:30 queue delay.
@@ -13,6 +12,9 @@
 #   BAKE_SMTP_PORT   587
 #   BAKE_SMTP_USER   SMTP login (usually the Gmail address)
 #   BAKE_SMTP_PASS   app password (not the normal Gmail password)
+# Space-Track login (required):
+#   SPACE_TRACK_IDENTITY
+#   SPACE_TRACK_PASSWORD
 # Without mail secrets the bake still ships; before/after is always in the job summary.
 name: Catalog bake
 
@@ -47,6 +49,8 @@ jobs:
       BAKE_SMTP_PORT: ${{ secrets.BAKE_SMTP_PORT }}
       BAKE_SMTP_USER: ${{ secrets.BAKE_SMTP_USER }}
       BAKE_SMTP_PASS: ${{ secrets.BAKE_SMTP_PASS }}
+      SPACE_TRACK_IDENTITY: ${{ secrets.SPACE_TRACK_IDENTITY }}
+      SPACE_TRACK_PASSWORD: ${{ secrets.SPACE_TRACK_PASSWORD }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -69,11 +73,11 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          if npm run fetch:sats; then
+          if npm run fetch:space-track; then
             echo "Fetch succeeded."
           else
-            echo "Fetch exited non-zero (CelesTrak group failed or empty). Retrying once..."
-            npm run fetch:sats
+            echo "Fetch exited non-zero. Retrying once..."
+            npm run fetch:space-track
           fi
 
       - name: Write before/after report
@@ -116,14 +120,23 @@ jobs:
 
           files=(
             public/data/beidou-fallback.json
+            public/data/debris-fallback.json
             public/data/galileo-fallback.json
+            public/data/globalstar-fallback.json
             public/data/glo-ops-fallback.json
             public/data/gps-ops-fallback.json
+            public/data/intelsat-fallback.json
             public/data/iridium-NEXT-fallback.json
             public/data/kuiper-fallback.json
             public/data/oneweb-fallback.json
+            public/data/planet-fallback.json
+            public/data/qianfan-fallback.json
+            public/data/rocket-fallback.json
+            public/data/spire-fallback.json
             public/data/starlink-fallback.json
             public/data/stations-fallback.json
+            public/data/unknown-fallback.json
+            public/data/weather-fallback.json
           )
 
           git add -- "${files[@]}"
@@ -135,14 +148,23 @@ jobs:
 
           extra="$(git diff --cached --name-only | grep -v \
             -e '^public/data/beidou-fallback.json$' \
+            -e '^public/data/debris-fallback.json$' \
             -e '^public/data/galileo-fallback.json$' \
+            -e '^public/data/globalstar-fallback.json$' \
             -e '^public/data/glo-ops-fallback.json$' \
             -e '^public/data/gps-ops-fallback.json$' \
+            -e '^public/data/intelsat-fallback.json$' \
             -e '^public/data/iridium-NEXT-fallback.json$' \
             -e '^public/data/kuiper-fallback.json$' \
             -e '^public/data/oneweb-fallback.json$' \
+            -e '^public/data/planet-fallback.json$' \
+            -e '^public/data/qianfan-fallback.json$' \
+            -e '^public/data/rocket-fallback.json$' \
+            -e '^public/data/spire-fallback.json$' \
             -e '^public/data/starlink-fallback.json$' \
             -e '^public/data/stations-fallback.json$' \
+            -e '^public/data/unknown-fallback.json$' \
+            -e '^public/data/weather-fallback.json$' \
             || true)"
           if [ -n "${extra}" ]; then
             echo "::error::Refusing to commit unexpected staged files:"
@@ -150,7 +172,7 @@ jobs:
             exit 1
           fi
 
-          git commit -m "Refresh Orbital View satellite catalog from CelesTrak."
+          git commit -m "Refresh OrbitalView satellite catalog."
           git push
         env:
           # Default GITHUB_TOKEN with contents: write. If main is protected and

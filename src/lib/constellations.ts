@@ -103,21 +103,18 @@ export const CONSTELLATIONS: Constellation[] = [
     name: "Debris",
     color: "#94a3b8",
     group: "debris",
-    startVisible: false,
   },
   {
     id: "rocket",
     name: "Rocket bodies",
     color: "#d97706",
     group: "rocket",
-    startVisible: false,
   },
   {
     id: "unknown",
     name: "Unknown",
     color: "#c4b5fd",
     group: "unknown",
-    startVisible: false,
   },
 ];
 

@@ -23,6 +23,15 @@ const FILES = [
   ["galileo", "public/data/galileo-fallback.json"],
   ["glo", "public/data/glo-ops-fallback.json"],
   ["beidou", "public/data/beidou-fallback.json"],
+  ["qianfan", "public/data/qianfan-fallback.json"],
+  ["planet", "public/data/planet-fallback.json"],
+  ["intelsat", "public/data/intelsat-fallback.json"],
+  ["spire", "public/data/spire-fallback.json"],
+  ["globalstar", "public/data/globalstar-fallback.json"],
+  ["weather", "public/data/weather-fallback.json"],
+  ["debris", "public/data/debris-fallback.json"],
+  ["rocket", "public/data/rocket-fallback.json"],
+  ["unknown", "public/data/unknown-fallback.json"],
 ];
 
 function arg(name, fallback = null) {
