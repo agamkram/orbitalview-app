@@ -8,7 +8,10 @@ export interface CatalogFile {
   satellites: SerializedSatellite[];
 }
 
-const BUNDLED_DATA_DIR = path.join(process.cwd(), "public", "data");
+/** Live site reads public/data. A local .env can point this at a scratch bake. */
+const BUNDLED_DATA_DIR = process.env.ORBITAL_CATALOG_DIR
+  ? path.resolve(process.cwd(), process.env.ORBITAL_CATALOG_DIR)
+  : path.join(process.cwd(), "public", "data");
 
 function cacheKey(group: string) {
   return group.replace(/[^a-z0-9-]/gi, "_");

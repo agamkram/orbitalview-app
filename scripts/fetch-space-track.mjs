@@ -53,37 +53,73 @@ const OMM_KEYS = [
   "MEAN_MOTION_DDOT",
 ];
 
-/** Same ids and file stems as src/lib/constellations.ts and fetch-sats.mjs. */
+function meanMotion(record) {
+  const n = Number(value(record, "MEAN_MOTION"));
+  return Number.isFinite(n) ? n : null;
+}
+
+function catalogNumber(record) {
+  const n = Number(value(record, "NORAD_CAT_ID"));
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Same ids and file stems as src/lib/constellations.ts and fetch-sats.mjs.
+ * Space-Track names differ from CelesTrak (NAVSTAR, not GPS). Mean motion and
+ * catalog number keep retired GPS and early GLONASS out of the operational groups.
+ */
 const GROUPS = [
   {
     id: "stations",
     group: "stations",
     test: (name) =>
       name.startsWith("ISS") ||
-      name.startsWith("CSS") ||
+      name.startsWith("CSS ") ||
+      name.startsWith("CSS(") ||
       name === "POISK" ||
       name.includes("NAUKA") ||
       name.startsWith("TIANZHOU") ||
       name.startsWith("SHENZHOU") ||
-      name.startsWith("CREW DRAGON") ||
+      /^SZ-\d/.test(name) ||
+      name.startsWith("DRAGON ") ||
       name.startsWith("CYGNUS") ||
-      name.startsWith("PROGRESS-MS") ||
-      name.startsWith("PROGRESS MS") ||
-      name.startsWith("SOYUZ-MS") ||
-      name.startsWith("SOYUZ MS"),
+      name.startsWith("PROGRESS") ||
+      name.startsWith("SOYUZ"),
   },
   { id: "starlink", group: "starlink", test: (name) => name.includes("STARLINK") },
-  { id: "gps", group: "gps-ops", test: (name) => name.startsWith("GPS ") },
+  {
+    id: "gps",
+    group: "gps-ops",
+    test: (name, record) => {
+      const motion = meanMotion(record);
+      return name.startsWith("NAVSTAR ") && motion != null && motion >= 2.004 && motion <= 2.008;
+    },
+  },
   { id: "oneweb", group: "oneweb", test: (name) => name.includes("ONEWEB") },
-  { id: "iridium", group: "iridium-NEXT", test: (name) => /^IRIDIUM \d+$/.test(name) },
+  {
+    id: "iridium",
+    group: "iridium-NEXT",
+    test: (name) => {
+      const match = /^IRIDIUM (\d+)$/.exec(name);
+      if (!match) return false;
+      const number = Number(match[1]);
+      return number >= 100 && number <= 199;
+    },
+  },
   { id: "kuiper", group: "kuiper", test: (name) => name.includes("KUIPER") },
   { id: "galileo", group: "galileo", test: (name) => name.includes("GALILEO") },
   {
     id: "glo",
     group: "glo-ops",
-    test: (name) => /^COSMOS \d+/.test(name) && /\(7\d{2}K?\)/.test(name),
+    test: (name, record) => name.includes("GLONASS") && catalogNumber(record) >= 30000,
   },
-  { id: "beidou", group: "beidou", test: (name) => name.includes("BEIDOU") },
+  {
+    id: "beidou",
+    group: "beidou",
+    test: (name, record) =>
+      (name.includes("BEIDOU") || name.startsWith("BD-") || name.startsWith("BD ")) &&
+      catalogNumber(record) >= 37210,
+  },
 ];
 
 function assertScratch(path) {
@@ -207,7 +243,7 @@ function assignGroups(records) {
       skipped += 1;
       continue;
     }
-    const group = GROUPS.find((candidate) => candidate.test(name));
+    const group = GROUPS.find((candidate) => candidate.test(name, record));
     if (!group) continue;
     const omm = normalizeOmm(record);
     if (!omm.NORAD_CAT_ID || !omm.OBJECT_NAME) continue;
@@ -278,7 +314,7 @@ async function main() {
     `Debris and rocket bodies skipped: ${skipped}`,
     `Sorted at: ${fetchedAt}`,
     "",
-    "The preview still reads public/data. These files are scratch only.",
+    "Files land in scratch/space-track/groups. The live site keeps reading public/data.",
     "",
     "Group         CelesTrak  Space-Track  In both  Only CT  Only ST",
   ];
