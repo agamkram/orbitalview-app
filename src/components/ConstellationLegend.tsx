@@ -99,10 +99,6 @@ export function ConstellationLegend({
 
   if (!mounted) return null;
 
-  const allOn = CONSTELLATIONS.every(
-    (constellation) => visibleConstellations[constellation.id] ?? true,
-  );
-
   const fixedStyle = {
     right: edgeInset.right,
   } as const;
@@ -127,16 +123,22 @@ export function ConstellationLegend({
           style={{ ...fixedStyle, top: edgeInset.panelTop }}
           className="pointer-events-auto z-[100000] w-[min(240px,calc(100vw-1.5rem))] overflow-visible rounded-xl border border-white/10 bg-black/[0.02] p-2 backdrop-blur-sm"
         >
-          <div className="mb-1 flex justify-end px-1">
+          <div className="mb-1 flex items-center justify-end gap-2 px-1">
             <button
               type="button"
-              onClick={() => onSetAll(!allOn)}
-              className="text-[10px] leading-none text-white/40 hover:text-white/80"
-              aria-label={
-                allOn ? "Deselect all constellations" : "Select all constellations"
-              }
+              onClick={() => onSetAll(true)}
+              className="text-[11px] font-medium leading-none text-white/75 hover:text-white"
+              aria-label="Select all constellations"
             >
-              {allOn ? "None" : "All"}
+              All
+            </button>
+            <button
+              type="button"
+              onClick={() => onSetAll(false)}
+              className="text-[11px] font-medium leading-none text-white/75 hover:text-white"
+              aria-label="Deselect all constellations"
+            >
+              None
             </button>
           </div>
           <ul className="space-y-1">
