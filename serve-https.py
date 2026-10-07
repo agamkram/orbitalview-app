@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serve Satellite over HTTPS for Mac and phone preview.
+"""Serve OrbitalView over HTTPS for Mac and phone preview.
 
 This app is Next.js. The preview cert is created here, then Next serves it.
 """
@@ -226,7 +226,7 @@ def main():
     if not CERT.exists() or not KEY.exists():
         print("Could not create .local-cert.pem / .local-key.pem", file=sys.stderr)
         sys.exit(1)
-    print("Satellite", flush=True)
+    print("OrbitalView", flush=True)
     print("  Mac:    https://127.0.0.1:%s/" % port, flush=True)
     os.execv(
         NODE,

@@ -1,4 +1,4 @@
-# Orbital View
+# OrbitalView
 
 Interactive 3D map of satellites in Earth orbit.
 

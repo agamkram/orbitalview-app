@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Orbital View home-screen icons."""
+"""Generate OrbitalView home-screen icons."""
 
 from __future__ import annotations
 
