@@ -99,6 +99,13 @@ export function ConstellationLegend({
 
   if (!mounted) return null;
 
+  const allOn = CONSTELLATIONS.every(
+    (constellation) => visibleConstellations[constellation.id] ?? true,
+  );
+  const noneOn = CONSTELLATIONS.every(
+    (constellation) => !(visibleConstellations[constellation.id] ?? true),
+  );
+
   const fixedStyle = {
     right: edgeInset.right,
   } as const;
@@ -121,55 +128,78 @@ export function ConstellationLegend({
         <div
           id="ov-constellation-panel"
           style={{ ...fixedStyle, top: edgeInset.panelTop }}
-          className="pointer-events-auto z-[100000] w-[min(240px,calc(100vw-1.5rem))] overflow-visible rounded-xl border border-white/10 bg-black/[0.02] p-2 backdrop-blur-sm"
+          className="pointer-events-auto z-[100000] w-max max-w-[calc(100vw-1.5rem)] overflow-visible rounded-xl border border-white/10 bg-black/[0.02] px-[3px] pt-2 pb-[2px] backdrop-blur-sm"
         >
-          <div className="mb-1 flex items-center justify-end gap-2 px-1">
+          <div className="mb-1.5 flex items-center justify-end gap-1.5 px-0.5">
             <button
               type="button"
               onClick={() => onSetAll(true)}
-              className="text-[11px] font-medium leading-none text-white/75 hover:text-white"
+              className={`rounded-full border px-2 py-0.5 text-[11px] font-medium leading-none ${
+                allOn
+                  ? "border-white/35 bg-white/20 text-white"
+                  : "border-white/10 text-white/40 hover:text-white/70"
+              }`}
               aria-label="Select all constellations"
+              aria-pressed={allOn}
             >
               All
             </button>
             <button
               type="button"
               onClick={() => onSetAll(false)}
-              className="text-[11px] font-medium leading-none text-white/75 hover:text-white"
+              className={`rounded-full border px-2 py-0.5 text-[11px] font-medium leading-none ${
+                noneOn
+                  ? "border-white/35 bg-white/20 text-white"
+                  : "border-white/10 text-white/40 hover:text-white/70"
+              }`}
               aria-label="Deselect all constellations"
+              aria-pressed={noneOn}
             >
               None
             </button>
           </div>
-          <ul className="space-y-1">
-            {sortedConstellations.map((constellation) => {
-              const visible = visibleConstellations[constellation.id] ?? true;
-              const count = counts[constellation.id] ?? 0;
+          <table className="border-separate border-spacing-y-[3px] text-xs">
+            <tbody>
+              {sortedConstellations.map((constellation) => {
+                const visible = visibleConstellations[constellation.id] ?? true;
+                const count = counts[constellation.id] ?? 0;
 
-              return (
-                <li key={constellation.id}>
-                  <button
-                    type="button"
+                return (
+                  <tr
+                    key={constellation.id}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => onToggle(constellation.id)}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition ${
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onToggle(constellation.id);
+                      }
+                    }}
+                    className={`rounded-lg transition ${
                       visible ? "hover:bg-white/10" : "opacity-40 hover:opacity-65"
                     }`}
                   >
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{ backgroundColor: constellation.color }}
-                    />
-                    <span className="min-w-0 flex-1 truncate text-white/90">
+                    <td className="rounded-l-lg py-1.5 pl-2">
+                      <span
+                        className="block h-2.5 w-2.5 rounded-full"
+                        style={{ backgroundColor: constellation.color }}
+                      />
+                    </td>
+                    <td className="whitespace-nowrap py-1.5 pl-2 text-white/90">
                       {constellation.name}
-                    </span>
-                    <span className="font-mono text-[10px] text-white/45">
+                    </td>
+                    <td className="rounded-r-lg py-1.5 pl-3 pr-2 text-right font-mono text-[10px] tabular-nums text-white/45">
                       {count.toLocaleString()}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p className="mt-1 whitespace-nowrap text-center font-sans text-xs leading-none text-white/40">
+            Data from space-track.org
+          </p>
         </div>
       ) : null}
     </>,
