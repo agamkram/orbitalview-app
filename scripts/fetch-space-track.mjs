@@ -25,6 +25,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SCRATCH = join(ROOT, "scratch", "space-track");
 const RAW_PATH = join(SCRATCH, "gp.json");
 const SATCAT_PATH = join(SCRATCH, "satcat.json");
+const WORKING_PATH = join(SCRATCH, "working.json");
+const GPS_STATUS_URL = "https://www.navcen.uscg.gov/gps-constellation";
+const GLONASS_STATUS_URL = "https://glonass-iac.ru/upload/monitoring/cus";
 const GROUP_DIR = join(SCRATCH, "groups");
 const REPORT_PATH = join(SCRATCH, "report.txt");
 const ENV_PATH = join(ROOT, ".env.space-track");
@@ -70,9 +73,14 @@ function catalogNumber(record) {
 
 /**
  * Same ids and file stems as src/lib/constellations.ts and fetch-sats.mjs.
- * Space-Track names differ from CelesTrak (NAVSTAR, not GPS). Mean motion and
- * catalog number keep retired GPS and early GLONASS out of the operational groups.
+ * GPS and GLONASS use the operators' working lists when those downloads succeed.
+ * The other groups are every matching payload still in the Space-Track file.
  */
+const workingLists = {
+  gpsSvns: null,
+  glonassCosmos: null,
+  note: "working lists not loaded",
+};
 const GROUPS = [
   {
     id: "stations",
@@ -96,6 +104,8 @@ const GROUPS = [
     id: "gps",
     group: "gps-ops",
     test: (name, record) => {
+      const svn = navstarNumber(name);
+      if (workingLists.gpsSvns) return svn != null && workingLists.gpsSvns.has(svn);
       const motion = meanMotion(record);
       return name.startsWith("NAVSTAR ") && motion != null && motion >= 2.004 && motion <= 2.008;
     },
@@ -116,7 +126,11 @@ const GROUPS = [
   {
     id: "glo",
     group: "glo-ops",
-    test: (name, record) => name.includes("GLONASS") && catalogNumber(record) >= 30000,
+    test: (name, record) => {
+      const cosmos = cosmosNumber(name);
+      if (workingLists.glonassCosmos) return cosmos != null && workingLists.glonassCosmos.has(cosmos);
+      return name.includes("GLONASS") && catalogNumber(record) >= 30000;
+    },
   },
   {
     id: "beidou",
@@ -238,6 +252,121 @@ function normalizeOmm(record) {
   return omm;
 }
 
+function navstarNumber(name) {
+  const match = /^NAVSTAR (\d+)\b/.exec(name);
+  return match ? Number(match[1]) : null;
+}
+
+function cosmosNumber(name) {
+  const match = /^COSMOS (\d+)\b/.exec(name);
+  return match ? Number(match[1]) : null;
+}
+
+function stripTags(value) {
+  return value.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+}
+
+function parseGpsSvns(html) {
+  const svns = new Set();
+  for (const row of html.split(/<tr\b/i).slice(1)) {
+    const cells = [...row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map((match) =>
+      stripTags(match[1]),
+    );
+    if (cells.length < 4) continue;
+    const svn = Number(cells[2]);
+    const prn = Number(cells[3]);
+    if (Number.isInteger(svn) && svn > 0 && Number.isInteger(prn) && prn > 0 && prn < 100) {
+      svns.add(svn);
+    }
+  }
+  return svns;
+}
+
+function parseGlonassCosmos(text) {
+  const cosmos = new Set();
+  for (const line of text.split("\n")) {
+    const match = /^\|\s*\d+\s*\|\s*(\d+)\s*\|[^|]*\|[^|]*\|[^|]*\|[^|]*\|\s*([A-Za-z]+)\s*\|/.exec(
+      line,
+    );
+    if (!match || match[2].toLowerCase() !== "operating") continue;
+    cosmos.add(Number(match[1]));
+  }
+  return cosmos;
+}
+
+function moscowFileStamp(date) {
+  const moscow = new Date(date.getTime() + 3 * 60 * 60 * 1000);
+  const month = String(moscow.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(moscow.getUTCDate()).padStart(2, "0");
+  return { year: moscow.getUTCFullYear(), mmdd: `${month}${day}` };
+}
+
+async function fetchText(url) {
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(30_000),
+    headers: { "User-Agent": "OrbitalView/1.0", Accept: "text/plain,text/html" },
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.text();
+}
+
+async function readWorkingFile() {
+  try {
+    const saved = JSON.parse(await readFile(WORKING_PATH, "utf8"));
+    const gpsSvns = new Set(saved.gpsSvns || []);
+    const glonassCosmos = new Set(saved.glonassCosmos || []);
+    if (gpsSvns.size < 24 || glonassCosmos.size < 18) return null;
+    return { gpsSvns, glonassCosmos, note: "reused the saved working lists" };
+  } catch {
+    return null;
+  }
+}
+
+async function loadWorkingLists() {
+  const saved = await readWorkingFile();
+  try {
+    const gpsHtml = await fetchText(GPS_STATUS_URL);
+    const gpsSvns = parseGpsSvns(gpsHtml);
+    if (gpsSvns.size < 24) throw new Error(`GPS working list has ${gpsSvns.size} satellites`);
+
+    let glonassText = null;
+    const errors = [];
+    for (const offset of [0, 1]) {
+      const stamp = moscowFileStamp(new Date(Date.now() - offset * 24 * 60 * 60 * 1000));
+      const url = `${GLONASS_STATUS_URL}/${stamp.year}/${stamp.mmdd}en.txt`;
+      try {
+        glonassText = await fetchText(url);
+        break;
+      } catch (error) {
+        errors.push(`${stamp.mmdd}: ${error.message}`);
+      }
+    }
+    if (!glonassText) throw new Error(errors.join("; "));
+    const glonassCosmos = parseGlonassCosmos(glonassText);
+    if (glonassCosmos.size < 18) {
+      throw new Error(`GLONASS working list has ${glonassCosmos.size} satellites`);
+    }
+
+    const payload = {
+      fetchedAt: new Date().toISOString(),
+      gpsSvns: [...gpsSvns].sort((a, b) => a - b),
+      glonassCosmos: [...glonassCosmos].sort((a, b) => a - b),
+    };
+    assertScratch(WORKING_PATH);
+    await writeFile(WORKING_PATH, JSON.stringify(payload, null, 2));
+    workingLists.gpsSvns = gpsSvns;
+    workingLists.glonassCosmos = glonassCosmos;
+    workingLists.note = `USCG GPS ${gpsSvns.size}, GLONASS IAC ${glonassCosmos.size}`;
+    console.log(`Working lists: ${workingLists.note}`);
+  } catch (error) {
+    if (!saved) throw error;
+    workingLists.gpsSvns = saved.gpsSvns;
+    workingLists.glonassCosmos = saved.glonassCosmos;
+    workingLists.note = `${saved.note} (${error.message})`;
+    console.warn(`Working list download failed. ${workingLists.note}`);
+  }
+}
+
 function objectName(record) {
   return String(value(record, "OBJECT_NAME") ?? "").trim().toUpperCase();
 }
@@ -334,6 +463,7 @@ async function main() {
   }
 
   const fetchedAt = new Date().toISOString();
+  await loadWorkingLists();
   const { buckets, skipped } = assignGroups(records);
   const lines = [
     "Orbital View scratch bake",
@@ -341,6 +471,7 @@ async function main() {
     `Catalog: ${source}`,
     `Records: ${records.length}`,
     `Debris and rocket bodies skipped: ${skipped}`,
+    `Working: ${workingLists.note}`,
     `Sorted at: ${fetchedAt}`,
     "",
     "Files land in scratch/space-track/groups. The live site keeps reading public/data.",
