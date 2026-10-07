@@ -12,6 +12,7 @@ interface ConstellationLegendProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onToggle: (id: string) => void;
+  onSetAll: (visible: boolean) => void;
 }
 
 /** Gap from Constellations button bottom edge to panel top — keep tight. */
@@ -47,6 +48,7 @@ export function ConstellationLegend({
   open,
   onOpenChange,
   onToggle,
+  onSetAll,
 }: ConstellationLegendProps) {
   const [mounted, setMounted] = useState(false);
   const [edgeInset, setEdgeInset] = useState({ top: 0, right: 12, panelTop: PANEL_GAP });
@@ -97,6 +99,10 @@ export function ConstellationLegend({
 
   if (!mounted) return null;
 
+  const allOn = CONSTELLATIONS.every(
+    (constellation) => visibleConstellations[constellation.id] ?? true,
+  );
+
   const fixedStyle = {
     right: edgeInset.right,
   } as const;
@@ -121,6 +127,18 @@ export function ConstellationLegend({
           style={{ ...fixedStyle, top: edgeInset.panelTop }}
           className="pointer-events-auto z-[100000] w-[min(240px,calc(100vw-1.5rem))] overflow-visible rounded-xl border border-white/10 bg-black/[0.02] p-2 backdrop-blur-sm"
         >
+          <div className="mb-1 flex justify-end px-1">
+            <button
+              type="button"
+              onClick={() => onSetAll(!allOn)}
+              className="text-[10px] leading-none text-white/40 hover:text-white/80"
+              aria-label={
+                allOn ? "Deselect all constellations" : "Select all constellations"
+              }
+            >
+              {allOn ? "None" : "All"}
+            </button>
+          </div>
           <ul className="space-y-1">
             {sortedConstellations.map((constellation) => {
               const visible = visibleConstellations[constellation.id] ?? true;

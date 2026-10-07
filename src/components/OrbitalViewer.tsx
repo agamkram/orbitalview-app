@@ -438,6 +438,12 @@ export function OrbitalViewer() {
     }));
   }, []);
 
+  const setAllConstellations = useCallback((visible: boolean) => {
+    setVisibleConstellations(
+      Object.fromEntries(CONSTELLATIONS.map((constellation) => [constellation.id, visible])),
+    );
+  }, []);
+
   const timeControlProps = {
     simTime,
     offsetHours,
@@ -517,6 +523,7 @@ export function OrbitalViewer() {
           open={legendOpen}
           onOpenChange={setLegendOpen}
           onToggle={toggleConstellation}
+          onSetAll={setAllConstellations}
         />
       ) : null}
 
