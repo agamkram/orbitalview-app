@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "fetch:sats": "node scripts/fetch-sats.mjs",
+    "fetch:space-track": "node scripts/fetch-space-track.mjs",
     "catalog:report": "node scripts/catalog-report.mjs"
   },
   "engines": {
