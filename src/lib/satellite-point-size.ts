@@ -69,7 +69,14 @@ export function getSizeClass(
     constellationId === "starlink" ||
     constellationId === "oneweb" ||
     constellationId === "iridium" ||
-    constellationId === "kuiper"
+    constellationId === "kuiper" ||
+    constellationId === "qianfan" ||
+    constellationId === "planet" ||
+    constellationId === "spire" ||
+    constellationId === "globalstar" ||
+    constellationId === "debris" ||
+    constellationId === "rocket" ||
+    constellationId === "unknown"
   ) {
     return "mega";
   }

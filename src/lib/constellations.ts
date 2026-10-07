@@ -3,6 +3,8 @@ export interface Constellation {
   name: string;
   color: string;
   group: string;
+  /** Off until the viewer turns the layer on. */
+  startVisible?: boolean;
 }
 
 export const CONSTELLATIONS: Constellation[] = [
@@ -59,6 +61,63 @@ export const CONSTELLATIONS: Constellation[] = [
     name: "BeiDou",
     color: "#ff922b",
     group: "beidou",
+  },
+  {
+    id: "qianfan",
+    name: "Qianfan",
+    color: "#22d3ee",
+    group: "qianfan",
+  },
+  {
+    id: "planet",
+    name: "Planet",
+    color: "#a3e635",
+    group: "planet",
+  },
+  {
+    id: "intelsat",
+    name: "Intelsat",
+    color: "#e2e8f0",
+    group: "intelsat",
+  },
+  {
+    id: "spire",
+    name: "Spire",
+    color: "#38bdf8",
+    group: "spire",
+  },
+  {
+    id: "globalstar",
+    name: "Globalstar",
+    color: "#fb7185",
+    group: "globalstar",
+  },
+  {
+    id: "weather",
+    name: "Weather",
+    color: "#67e8f9",
+    group: "weather",
+  },
+  {
+    id: "debris",
+    name: "Debris",
+    color: "#94a3b8",
+    group: "debris",
+    startVisible: false,
+  },
+  {
+    id: "rocket",
+    name: "Rocket bodies",
+    color: "#d97706",
+    group: "rocket",
+    startVisible: false,
+  },
+  {
+    id: "unknown",
+    name: "Unknown",
+    color: "#c4b5fd",
+    group: "unknown",
+    startVisible: false,
   },
 ];
 

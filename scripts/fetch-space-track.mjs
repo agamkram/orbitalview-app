@@ -28,6 +28,7 @@ const SATCAT_PATH = join(SCRATCH, "satcat.json");
 const WORKING_PATH = join(SCRATCH, "working.json");
 const GPS_STATUS_URL = "https://www.navcen.uscg.gov/gps-constellation";
 const GLONASS_STATUS_URL = "https://glonass-iac.ru/upload/monitoring/cus";
+const WEATHER_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=json";
 const GROUP_DIR = join(SCRATCH, "groups");
 const REPORT_PATH = join(SCRATCH, "report.txt");
 const ENV_PATH = join(ROOT, ".env.space-track");
@@ -72,15 +73,19 @@ function catalogNumber(record) {
 }
 
 /**
- * Same ids and file stems as src/lib/constellations.ts and fetch-sats.mjs.
- * GPS and GLONASS use the operators' working lists when those downloads succeed.
- * The other groups are every matching payload still in the Space-Track file.
+ * Same ids and file stems as src/lib/constellations.ts.
+ * GPS, GLONASS, and weather use outside lists. Debris, rocket bodies, and
+ * unknown come from the Space-Track catalog type.
  */
 const workingLists = {
   gpsSvns: null,
   glonassCosmos: null,
+  weatherIds: null,
   note: "working lists not loaded",
 };
+
+const catalogTypes = new Map();
+
 const GROUPS = [
   {
     id: "stations",
@@ -139,6 +144,23 @@ const GROUPS = [
       (name.includes("BEIDOU") || name.startsWith("BD-") || name.startsWith("BD ")) &&
       catalogNumber(record) >= 37210,
   },
+  {
+    id: "qianfan",
+    group: "qianfan",
+    test: (name) => name.includes("QIANFAN") || name.includes("THOUSAND SAILS") || name.startsWith("G60"),
+  },
+  {
+    id: "planet",
+    group: "planet",
+    test: (name) => name.startsWith("FLOCK") || name.includes("SKYSAT") || name.startsWith("DOVE"),
+  },
+  { id: "intelsat", group: "intelsat", test: (name) => name.includes("INTELSAT") },
+  { id: "spire", group: "spire", test: (name) => name.includes("LEMUR") || name.startsWith("SPIRE") },
+  { id: "globalstar", group: "globalstar", test: (name) => name.includes("GLOBALSTAR") },
+  { id: "weather", group: "weather", test: () => false },
+  { id: "debris", group: "debris", test: () => false },
+  { id: "rocket", group: "rocket", test: () => false },
+  { id: "unknown", group: "unknown", test: () => false },
 ];
 
 function assertScratch(path) {
@@ -252,6 +274,10 @@ function normalizeOmm(record) {
   return omm;
 }
 
+function objectName(record) {
+  return String(value(record, "OBJECT_NAME") ?? "").trim().toUpperCase();
+}
+
 function navstarNumber(name) {
   const match = /^NAVSTAR (\d+)\b/.exec(name);
   return match ? Number(match[1]) : null;
@@ -347,32 +373,71 @@ async function loadWorkingLists() {
       throw new Error(`GLONASS working list has ${glonassCosmos.size} satellites`);
     }
 
+    const weatherIds = await loadWeatherIds();
     const payload = {
       fetchedAt: new Date().toISOString(),
       gpsSvns: [...gpsSvns].sort((a, b) => a - b),
       glonassCosmos: [...glonassCosmos].sort((a, b) => a - b),
+      weatherIds: [...weatherIds].sort(),
     };
     assertScratch(WORKING_PATH);
     await writeFile(WORKING_PATH, JSON.stringify(payload, null, 2));
     workingLists.gpsSvns = gpsSvns;
     workingLists.glonassCosmos = glonassCosmos;
-    workingLists.note = `USCG GPS ${gpsSvns.size}, GLONASS IAC ${glonassCosmos.size}`;
+    workingLists.weatherIds = weatherIds;
+    workingLists.note = `USCG GPS ${gpsSvns.size}, GLONASS IAC ${glonassCosmos.size}, CelesTrak weather ${weatherIds.size}`;
     console.log(`Working lists: ${workingLists.note}`);
   } catch (error) {
     if (!saved) throw error;
     workingLists.gpsSvns = saved.gpsSvns;
     workingLists.glonassCosmos = saved.glonassCosmos;
+    workingLists.weatherIds = saved.weatherIds;
     workingLists.note = `${saved.note} (${error.message})`;
     console.warn(`Working list download failed. ${workingLists.note}`);
   }
 }
 
-function objectName(record) {
-  return String(value(record, "OBJECT_NAME") ?? "").trim().toUpperCase();
-}
-
 function isDebrisOrRocket(name) {
   return name.includes(" DEB") || name.includes("R/B") || name.includes(" DEBRIS");
+}
+
+function recordId(record) {
+  const id = value(record, "NORAD_CAT_ID");
+  return id == null ? "" : String(id);
+}
+
+function catalogBucket(name, id) {
+  const type = catalogTypes.get(id) || "";
+  if (type === "DEBRIS" || name.includes(" DEB") || name.includes(" DEBRIS")) return "debris";
+  if (type === "ROCKET BODY" || name.includes("R/B")) return "rocket";
+  if (type === "UNKNOWN") return "unknown";
+  return null;
+}
+
+async function loadCatalogTypes() {
+  const rows = JSON.parse(await readFile(SATCAT_PATH, "utf8"));
+  catalogTypes.clear();
+  for (const row of rows) {
+    const id = String(row.NORAD_CAT_ID ?? row.norad_cat_id ?? "");
+    const type = String(row.OBJECT_TYPE ?? row.object_type ?? "").toUpperCase();
+    if (id) catalogTypes.set(id, type);
+  }
+}
+
+async function loadWeatherIds() {
+  const response = await fetch(WEATHER_URL, {
+    signal: AbortSignal.timeout(60_000),
+    headers: { "User-Agent": "OrbitalView/1.0", Accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`weather list HTTP ${response.status}`);
+  const rows = await response.json();
+  const ids = new Set();
+  for (const row of rows) {
+    const id = row.NORAD_CAT_ID ?? row.norad_cat_id;
+    if (id != null) ids.add(String(id));
+  }
+  if (ids.size < 40) throw new Error(`weather list has ${ids.size} satellites`);
+  return ids;
 }
 
 function assignGroups(records) {
@@ -381,11 +446,19 @@ function assignGroups(records) {
 
   for (const record of records) {
     const name = objectName(record);
-    if (!name || isDebrisOrRocket(name)) {
+    if (!name) {
       skipped += 1;
       continue;
     }
-    const group = GROUPS.find((candidate) => candidate.test(name, record));
+    const id = recordId(record);
+    const bucket = catalogBucket(name, id);
+    let group = bucket ? GROUPS.find((candidate) => candidate.id === bucket) : null;
+    if (!group && workingLists.weatherIds?.has(id)) {
+      group = GROUPS.find((candidate) => candidate.id === "weather");
+    }
+    if (!group && !isDebrisOrRocket(name)) {
+      group = GROUPS.find((candidate) => candidate.test(name, record));
+    }
     if (!group) continue;
     const omm = normalizeOmm(record);
     if (!omm.NORAD_CAT_ID || !omm.OBJECT_NAME) continue;
@@ -464,19 +537,16 @@ async function main() {
 
   const fetchedAt = new Date().toISOString();
   await loadWorkingLists();
+  await loadCatalogTypes();
   const { buckets, skipped } = assignGroups(records);
   const lines = [
     "Orbital View scratch bake",
     "Source: USSPACECOM via Space-Track.org",
     `Catalog: ${source}`,
     `Records: ${records.length}`,
-    `Debris and rocket bodies skipped: ${skipped}`,
+    `Left unsorted: ${skipped}`,
     `Working: ${workingLists.note}`,
     `Sorted at: ${fetchedAt}`,
-    "",
-    "Files land in scratch/space-track/groups. The live site keeps reading public/data.",
-    "",
-    "Group         CelesTrak  Space-Track  In both  Only CT  Only ST",
   ];
 
   for (const group of GROUPS) {

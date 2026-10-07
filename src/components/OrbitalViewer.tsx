@@ -43,7 +43,7 @@ function buildInitialVisibility(cardMode: boolean) {
       constellation.id,
       cardMode
         ? (CARD_CONSTELLATION_IDS as readonly string[]).includes(constellation.id)
-        : true,
+        : constellation.startVisible !== false,
     ]),
   );
 }
