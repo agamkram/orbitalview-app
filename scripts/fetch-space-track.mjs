@@ -7,8 +7,9 @@
  *
  *   npm run fetch:space-track
  *
- * A raw download newer than 50 minutes is reused, so filter tweaks do not
- * hit Space-Track again. Pass --refresh to force one new download.
+ * A raw element-set download newer than 50 minutes is reused, so filter
+ * tweaks do not hit Space-Track again. Pass --refresh to force one new
+ * element-set download. The satellite catalog is reused for 20 hours.
  *
  * Login: .env.space-track (gitignored)
  *   SPACE_TRACK_IDENTITY=...
@@ -23,15 +24,19 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SCRATCH = join(ROOT, "scratch", "space-track");
 const RAW_PATH = join(SCRATCH, "gp.json");
+const SATCAT_PATH = join(SCRATCH, "satcat.json");
 const GROUP_DIR = join(SCRATCH, "groups");
 const REPORT_PATH = join(SCRATCH, "report.txt");
 const ENV_PATH = join(ROOT, ".env.space-track");
 const LIVE_DIR = join(ROOT, "public", "data");
 const LOGIN_URL = "https://www.space-track.org/ajaxauth/login";
 const GP_URL =
-  "https://www.space-track.org/basicspacedata/query/class/gp/decay_date/null-val/epoch/%3Enow-10/orderby/norad_cat_id/format/json/emptyresult/show";
+  "https://www.space-track.org/basicspacedata/query/class/gp/decay_date/null-val/epoch/%3Enow-30/orderby/norad_cat_id/format/json/emptyresult/show";
+const SATCAT_URL =
+  "https://www.space-track.org/basicspacedata/query/class/satcat/DECAY/null-val/format/json/emptyresult/show";
 const TIMEOUT_MS = 180_000;
-const REUSE_MS = 50 * 60 * 1000;
+const GP_REUSE_MS = 50 * 60 * 1000;
+const SATCAT_REUSE_MS = 20 * 60 * 60 * 1000;
 
 const OMM_KEYS = [
   "OBJECT_NAME",
@@ -190,8 +195,8 @@ async function login(identity, password) {
   return cookie;
 }
 
-async function downloadGp(cookie) {
-  const response = await fetch(GP_URL, {
+async function downloadJson(cookie, url, label) {
+  const response = await fetch(url, {
     cache: "no-store",
     signal: AbortSignal.timeout(TIMEOUT_MS),
     headers: {
@@ -201,13 +206,21 @@ async function downloadGp(cookie) {
     },
   });
   if (!response.ok) {
-    throw new Error(`GP download → HTTP ${response.status}`);
+    throw new Error(`${label} download → HTTP ${response.status}`);
   }
   const records = await response.json();
   if (!Array.isArray(records) || records.length === 0) {
-    throw new Error("GP download returned no records.");
+    throw new Error(`${label} download returned no records.`);
   }
   return records;
+}
+
+async function downloadGp(cookie) {
+  return downloadJson(cookie, GP_URL, "GP");
+}
+
+async function downloadSatcat(cookie) {
+  return downloadJson(cookie, SATCAT_URL, "SATCAT");
 }
 
 function value(record, key) {
@@ -268,10 +281,10 @@ async function liveIds(group) {
   }
 }
 
-async function rawIsFresh() {
+async function fileIsFresh(path, maxAgeMs) {
   try {
-    const info = await stat(RAW_PATH);
-    return Date.now() - info.mtimeMs < REUSE_MS;
+    const info = await stat(path);
+    return Date.now() - info.mtimeMs < maxAgeMs;
   } catch {
     return false;
   }
@@ -283,21 +296,37 @@ async function main() {
 
   let records;
   let source;
-  if (!refresh && (await rawIsFresh())) {
+  let cookie = null;
+  async function session() {
+    if (cookie) return cookie;
+    const { identity, password } = await loadCredentials();
+    process.stdout.write("Signing in… ");
+    cookie = await login(identity, password);
+    console.log("ok");
+    return cookie;
+  }
+
+  if (!refresh && (await fileIsFresh(RAW_PATH, GP_REUSE_MS))) {
     records = JSON.parse(await readFile(RAW_PATH, "utf8"));
     source = "reused scratch/space-track/gp.json";
     console.log(source);
   } else {
-    const { identity, password } = await loadCredentials();
-    process.stdout.write("Signing in… ");
-    const cookie = await login(identity, password);
-    console.log("ok");
-    process.stdout.write("Downloading the public catalog… ");
-    records = await downloadGp(cookie);
+    process.stdout.write("Downloading element sets… ");
+    records = await downloadGp(await session());
     console.log(`${records.length} records`);
     assertScratch(RAW_PATH);
     await writeFile(RAW_PATH, JSON.stringify(records));
     source = "downloaded just now";
+  }
+
+  if (await fileIsFresh(SATCAT_PATH, SATCAT_REUSE_MS)) {
+    console.log("reused scratch/space-track/satcat.json");
+  } else {
+    process.stdout.write("Downloading the satellite catalog… ");
+    const satcat = await downloadSatcat(await session());
+    console.log(`${satcat.length} records`);
+    assertScratch(SATCAT_PATH);
+    await writeFile(SATCAT_PATH, JSON.stringify(satcat));
   }
 
   if (!Array.isArray(records) || records.length === 0) {
