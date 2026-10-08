@@ -5,11 +5,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 
 import { CONSTELLATION_BY_ID } from "@/lib/constellations";
-import {
-  lerpPositionBuffers,
-  SatelliteRecord,
-  writeSatellitePosition,
-} from "@/lib/satellite-math";
+import { SatelliteRecord, writeSatellitePosition } from "@/lib/satellite-math";
 import {
   getSizeClass,
   isPhonePointViewport,
@@ -21,8 +17,10 @@ import {
   TRUE_SCALE_TRANSITION_SEC,
 } from "@/lib/satellite-point-size";
 
-const PROPAGATE_INTERVAL_MS = 50;
-const SNAP_TIME_JUMP_MS = 5_000;
+/** Sim time between SGP4 solves. A straight chord over 20 s of LEO stays sub-pixel at max zoom. */
+const SEGMENT_SIM_MS = 20_000;
+/** Finish solving the next segment by this fraction of the current one. */
+const PREFETCH_DONE_AT = 0.75;
 const CAMERA_SIZE_EPSILON = 0.15;
 const SIZE_FOLLOW_RATE = 10;
 const SIZE_SETTLE_EPSILON = 0.02;
@@ -33,9 +31,21 @@ interface RenderGroup {
   color: string;
   sizeClass: SizeClass;
   satellites: SatelliteRecord[];
-  previous: Float32Array;
-  target: Float32Array;
-  display: Float32Array;
+  /** Positions at segment start. */
+  from: THREE.BufferAttribute;
+  /** Positions at segment end. */
+  to: THREE.BufferAttribute;
+  /** Positions for the following segment end, solved a slice per frame. */
+  next: THREE.BufferAttribute;
+}
+
+interface Segment {
+  t0: number;
+  t1: number;
+  t2: number;
+  cursorGroup: number;
+  cursorIndex: number;
+  solved: number;
 }
 
 interface SatelliteFieldProps {
@@ -50,6 +60,7 @@ interface SatelliteFieldProps {
 
 function buildGroups(satelliteList: SatelliteRecord[]): RenderGroup[] {
   const grouped = new Map<string, RenderGroup>();
+  const empty = () => new THREE.BufferAttribute(new Float32Array(), 3);
 
   for (const satellite of satelliteList) {
     const meta = CONSTELLATION_BY_ID[satellite.constellationId];
@@ -66,9 +77,9 @@ function buildGroups(satelliteList: SatelliteRecord[]): RenderGroup[] {
         color: meta.color,
         sizeClass,
         satellites: [],
-        previous: new Float32Array(),
-        target: new Float32Array(),
-        display: new Float32Array(),
+        from: empty(),
+        to: empty(),
+        next: empty(),
       };
       grouped.set(key, group);
     }
@@ -77,13 +88,26 @@ function buildGroups(satelliteList: SatelliteRecord[]): RenderGroup[] {
   }
 
   for (const group of grouped.values()) {
-    const length = group.satellites.length;
-    group.previous = new Float32Array(length * 3);
-    group.target = new Float32Array(length * 3);
-    group.display = new Float32Array(length * 3);
+    const length = group.satellites.length * 3;
+    group.from = new THREE.BufferAttribute(new Float32Array(length), 3);
+    group.to = new THREE.BufferAttribute(new Float32Array(length), 3);
+    group.next = new THREE.BufferAttribute(new Float32Array(length), 3);
   }
 
   return Array.from(grouped.values());
+}
+
+function solve(
+  group: RenderGroup,
+  attr: THREE.BufferAttribute,
+  date: Date,
+  start: number,
+  end: number,
+) {
+  const array = attr.array as Float32Array;
+  for (let i = start; i < end; i += 1) {
+    writeSatellitePosition(group.satellites[i].satrec, date, array, i);
+  }
 }
 
 export function SatelliteField({
@@ -101,10 +125,32 @@ export function SatelliteField({
   const groupsRef = useRef(groups);
   groupsRef.current = groups;
 
-  const propagateDateRef = useRef(new Date(0));
-  const lastPropagateRef = useRef(0);
-  const blendRef = useRef(1);
-  const lastSimTimeRef = useRef(simTimeRef.current);
+  const blendUniformRef = useRef({ value: 1 });
+  const onBeforeCompile = useCallback(
+    (shader: THREE.WebGLProgramParametersWithUniforms) => {
+      shader.uniforms.uBlend = blendUniformRef.current;
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          "#include <common>",
+          "#include <common>\nattribute vec3 targetPosition;\nuniform float uBlend;",
+        )
+        .replace(
+          "#include <begin_vertex>",
+          "vec3 transformed = mix( position, targetPosition, uBlend );",
+        );
+    },
+    [],
+  );
+
+  const dateRef = useRef(new Date(0));
+  const segmentRef = useRef<Segment>({
+    t0: 0,
+    t1: 0,
+    t2: 0,
+    cursorGroup: 0,
+    cursorIndex: 0,
+    solved: 0,
+  });
   const lastCameraDistanceRef = useRef(-1);
   const lastPhoneViewportRef = useRef(isPhonePointViewport());
   const sizeTargetRef = useRef<Map<string, number>>(new Map());
@@ -119,28 +165,120 @@ export function SatelliteField({
   const visibleRef = useRef(visibleConstellations);
   visibleRef.current = visibleConstellations;
   const wasShownRef = useRef<Map<string, boolean>>(new Map());
-  const snapKeysRef = useRef(new Set<string>());
 
-  const seedPositions = useCallback(
-    (groupList: RenderGroup[]) => {
-      propagateDateRef.current.setTime(simTimeRef.current);
-      lastSimTimeRef.current = simTimeRef.current;
-      blendRef.current = 1;
+  const shown = useCallback(
+    (group: RenderGroup) => visibleRef.current[group.constellationId] ?? true,
+    [],
+  );
 
+  const bindAttributes = useCallback((group: RenderGroup) => {
+    const node = pointsRefs.current.get(group.key) as THREE.Points | undefined;
+    if (!node) return;
+    node.geometry.setAttribute("position", group.from);
+    node.geometry.setAttribute("targetPosition", group.to);
+  }, []);
+
+  const resetSegment = useCallback((simTime: number) => {
+    const segment = segmentRef.current;
+    segment.t0 = simTime;
+    segment.t1 = simTime;
+    segment.t2 = simTime + SEGMENT_SIM_MS;
+    segment.cursorGroup = 0;
+    segment.cursorIndex = 0;
+    segment.solved = 0;
+  }, []);
+
+  /** Solve every shown group at simTime and hold there; the next frame starts a new segment. */
+  const snapAll = useCallback(
+    (groupList: RenderGroup[], simTime: number) => {
+      resetSegment(simTime);
+      dateRef.current.setTime(simTime);
       for (const group of groupList) {
-        for (let i = 0; i < group.satellites.length; i += 1) {
-          writeSatellitePosition(
-            group.satellites[i].satrec,
-            propagateDateRef.current,
-            group.target,
-            i,
-          );
-        }
-        group.previous.set(group.target);
-        group.display.set(group.target);
+        if (!shown(group)) continue;
+        solve(group, group.from, dateRef.current, 0, group.satellites.length);
+        (group.to.array as Float32Array).set(group.from.array as Float32Array);
+        group.from.needsUpdate = true;
+        group.to.needsUpdate = true;
+        bindAttributes(group);
       }
     },
-    [simTimeRef],
+    [bindAttributes, resetSegment, shown],
+  );
+
+  /** Bring a just-shown group up to the shared segment. */
+  const catchUp = useCallback(
+    (group: RenderGroup, groupIndex: number) => {
+      const segment = segmentRef.current;
+      const length = group.satellites.length;
+      dateRef.current.setTime(segment.t0);
+      solve(group, group.from, dateRef.current, 0, length);
+      dateRef.current.setTime(segment.t1);
+      solve(group, group.to, dateRef.current, 0, length);
+      const nextSolved =
+        groupIndex < segment.cursorGroup
+          ? length
+          : groupIndex === segment.cursorGroup
+            ? segment.cursorIndex
+            : 0;
+      if (nextSolved > 0) {
+        dateRef.current.setTime(segment.t2);
+        solve(group, group.next, dateRef.current, 0, nextSolved);
+      }
+      group.from.needsUpdate = true;
+      group.to.needsUpdate = true;
+      bindAttributes(group);
+    },
+    [bindAttributes],
+  );
+
+  /** Solve the next segment end until `target` satellites (across shown groups) are done. */
+  const prefetch = useCallback(
+    (groupList: RenderGroup[], target: number) => {
+      const segment = segmentRef.current;
+      if (segment.solved >= target) return;
+      dateRef.current.setTime(segment.t2);
+      while (segment.solved < target && segment.cursorGroup < groupList.length) {
+        const group = groupList[segment.cursorGroup];
+        const length = group.satellites.length;
+        if (!shown(group)) {
+          segment.cursorGroup += 1;
+          segment.cursorIndex = 0;
+          continue;
+        }
+        const end = Math.min(length, segment.cursorIndex + (target - segment.solved));
+        solve(group, group.next, dateRef.current, segment.cursorIndex, end);
+        segment.solved += end - segment.cursorIndex;
+        segment.cursorIndex = end;
+        if (end >= length) {
+          segment.cursorGroup += 1;
+          segment.cursorIndex = 0;
+        }
+      }
+    },
+    [shown],
+  );
+
+  const rotate = useCallback(
+    (groupList: RenderGroup[]) => {
+      prefetch(groupList, Infinity);
+      const segment = segmentRef.current;
+      segment.t0 = segment.t1;
+      segment.t1 = segment.t2;
+      segment.t2 = segment.t1 + SEGMENT_SIM_MS;
+      segment.cursorGroup = 0;
+      segment.cursorIndex = 0;
+      segment.solved = 0;
+      for (const group of groupList) {
+        const { from, to, next } = group;
+        group.from = to;
+        group.to = next;
+        group.next = from;
+        if (!shown(group)) continue;
+        group.to.needsUpdate = true;
+        bindAttributes(group);
+      }
+    },
+    [bindAttributes, prefetch, shown],
   );
 
   const syncSizeTargets = useCallback(
@@ -163,7 +301,10 @@ export function SatelliteField({
   );
 
   useLayoutEffect(() => {
-    seedPositions(groups);
+    for (const group of groups) {
+      wasShownRef.current.set(group.key, shown(group));
+    }
+    snapAll(groups, simTimeRef.current);
     syncSizeTargets(camera.position.length(), groups);
 
     const mix = trueScaleMixRef.current;
@@ -173,11 +314,6 @@ export function SatelliteField({
     for (const group of groups) {
       const node = pointsRefs.current.get(group.key) as THREE.Points | undefined;
       if (!node) continue;
-
-      const geometry = node.geometry as THREE.BufferGeometry;
-      geometry.setAttribute("position", new THREE.BufferAttribute(group.display, 3));
-      const positionAttr = geometry.attributes.position;
-      if (positionAttr) positionAttr.needsUpdate = true;
 
       const material = node.material as THREE.PointsMaterial;
       const exaggerated =
@@ -193,80 +329,40 @@ export function SatelliteField({
         material.size = exaggerated * (1 - visualT);
       }
     }
-  }, [camera, groups, seedPositions, syncSizeTargets]);
+  }, [camera, groups, shown, simTimeRef, snapAll, syncSizeTargets]);
 
   useFrame((_, delta) => {
     const activeGroups = groupsRef.current;
     if (activeGroups.length === 0) return;
 
     const simTime = simTimeRef.current;
-    const now = performance.now();
-    const simTimeChanged = simTime !== lastSimTimeRef.current;
-    const timeJumpMs = Math.abs(simTime - lastSimTimeRef.current);
-    const isScrubbing = scrubbingRef.current;
-    const shouldSnap = isScrubbing || timeJumpMs >= SNAP_TIME_JUMP_MS;
-    const shown = (group: RenderGroup) =>
-      visibleRef.current[group.constellationId] ?? true;
-    const snapKeys = snapKeysRef.current;
-    snapKeys.clear();
-    for (const group of activeGroups) {
+    const segment = segmentRef.current;
+
+    if (scrubbingRef.current) {
+      if (simTime !== segment.t0 || segment.t1 !== segment.t0) snapAll(activeGroups, simTime);
+    } else if (simTime < segment.t0 || simTime > segment.t2) {
+      snapAll(activeGroups, simTime);
+    } else if (simTime >= segment.t1) {
+      rotate(activeGroups);
+    }
+
+    let shownCount = 0;
+    for (let g = 0; g < activeGroups.length; g += 1) {
+      const group = activeGroups[g];
       const on = shown(group);
-      const was = wasShownRef.current.get(group.key);
-      if (on && was === false) snapKeys.add(group.key);
+      if (on && wasShownRef.current.get(group.key) === false) catchUp(group, g);
       wasShownRef.current.set(group.key, on);
+      if (on) shownCount += group.satellites.length;
     }
 
-    const shouldPropagate =
-      simTimeChanged &&
-      (shouldSnap || now - lastPropagateRef.current >= PROPAGATE_INTERVAL_MS);
-
-    if (shouldPropagate || snapKeys.size > 0) {
-      if (shouldPropagate) {
-        lastPropagateRef.current = now;
-        lastSimTimeRef.current = simTime;
-      }
-      propagateDateRef.current.setTime(simTime);
-
-      let anyBlended = false;
-      for (const group of activeGroups) {
-        if (!shown(group)) continue;
-        const snapThis = shouldSnap || snapKeys.has(group.key);
-        if (!shouldPropagate && !snapThis) continue;
-
-        if (!snapThis) {
-          group.previous.set(group.target);
-        }
-        for (let i = 0; i < group.satellites.length; i += 1) {
-          writeSatellitePosition(
-            group.satellites[i].satrec,
-            propagateDateRef.current,
-            group.target,
-            i,
-          );
-        }
-        if (snapThis) {
-          group.previous.set(group.target);
-          group.display.set(group.target);
-        } else {
-          anyBlended = true;
-        }
-      }
-
-      if (shouldPropagate) {
-        blendRef.current = shouldSnap || !anyBlended ? 1 : 0;
-      }
-    }
-
-    const blend = blendRef.current;
-    const isBlending = blend < 1;
-
-    if (isBlending) {
-      blendRef.current = Math.min(1, blend + delta / (PROPAGATE_INTERVAL_MS / 1000));
-
-      for (const group of activeGroups) {
-        if (!shown(group)) continue;
-        lerpPositionBuffers(group.previous, group.target, group.display, blend);
-      }
+    const span = segment.t1 - segment.t0;
+    const blend = span > 0 ? Math.min(1, Math.max(0, (simTime - segment.t0) / span)) : 1;
+    blendUniformRef.current.value = blend;
+    if (span > 0) {
+      prefetch(
+        activeGroups,
+        Math.ceil(shownCount * Math.min(1, blend / PREFETCH_DONE_AT)),
+      );
     }
 
     const wantTrue = trueScaleRef.current;
@@ -292,7 +388,6 @@ export function SatelliteField({
       syncSizeTargets(cameraDistance, activeGroups);
     }
 
-    let sizeSettling = scaleTransitioning;
     for (const group of activeGroups) {
       if (!shown(group)) continue;
       const node = pointsRefs.current.get(group.key) as THREE.Points | undefined;
@@ -321,22 +416,8 @@ export function SatelliteField({
       const deltaSize = target - material.size;
       if (Math.abs(deltaSize) > SIZE_SETTLE_EPSILON) {
         material.size += deltaSize * Math.min(1, delta * SIZE_FOLLOW_RATE);
-        sizeSettling = true;
       } else if (Math.abs(deltaSize) > 1e-4) {
         material.size = target;
-      }
-    }
-
-    if (!isBlending && !shouldPropagate && snapKeys.size === 0 && !sizeSettling) return;
-
-    for (const group of activeGroups) {
-      if (!shown(group)) continue;
-      const node = pointsRefs.current.get(group.key) as THREE.Points | undefined;
-      if (!node) continue;
-
-      if (isBlending || shouldPropagate || snapKeys.has(group.key)) {
-        const positionAttr = node.geometry.attributes.position;
-        if (positionAttr) positionAttr.needsUpdate = true;
       }
     }
   });
@@ -363,6 +444,7 @@ export function SatelliteField({
             toneMapped={false}
             depthTest
             depthWrite={false}
+            onBeforeCompile={onBeforeCompile}
           />
         </points>
       ))}

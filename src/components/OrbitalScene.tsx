@@ -2,7 +2,7 @@
 
 import { OrbitControls } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
-import { Suspense } from "react";
+import { memo, Suspense } from "react";
 
 import { CARD_EARTH_ROTATION_Y } from "@/lib/card-preview";
 import {
@@ -36,7 +36,7 @@ interface OrbitalSceneProps {
   contentReady?: boolean;
 }
 
-export function OrbitalScene({
+export const OrbitalScene = memo(function OrbitalScene({
   satellites,
   visibleConstellations,
   speedRef,
@@ -64,11 +64,7 @@ export function OrbitalScene({
         far: 200,
       }}
       dpr={[1, 1.5]}
-      gl={{
-        antialias: true,
-        powerPreference: "high-performance",
-        logarithmicDepthBuffer: true,
-      }}
+      gl={{ antialias: true }}
       style={{ touchAction: "none" }}
     >
       <CameraFit
@@ -123,4 +119,4 @@ export function OrbitalScene({
       />
     </Canvas>
   );
-}
+});

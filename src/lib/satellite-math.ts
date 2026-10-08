@@ -161,15 +161,3 @@ export function computeFitCameraDistance(
 
   return Math.max(CAMERA_MIN_DISTANCE + 1, fitDistance);
 }
-
-export function lerpPositionBuffers(
-  from: Float32Array,
-  to: Float32Array,
-  out: Float32Array,
-  alpha: number,
-): void {
-  const t = alpha <= 0 ? 0 : alpha >= 1 ? 1 : alpha;
-  for (let i = 0; i < out.length; i += 1) {
-    out[i] = from[i] + (to[i] - from[i]) * t;
-  }
-}
