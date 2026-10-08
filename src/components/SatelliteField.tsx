@@ -116,6 +116,10 @@ export function SatelliteField({
   const maxDistanceRef = useRef(maxCameraDistance);
   fitDistanceRef.current = fitCameraDistance;
   maxDistanceRef.current = maxCameraDistance;
+  const visibleRef = useRef(visibleConstellations);
+  visibleRef.current = visibleConstellations;
+  const wasShownRef = useRef<Map<string, boolean>>(new Map());
+  const snapKeysRef = useRef(new Set<string>());
 
   const seedPositions = useCallback(
     (groupList: RenderGroup[]) => {
@@ -201,17 +205,35 @@ export function SatelliteField({
     const timeJumpMs = Math.abs(simTime - lastSimTimeRef.current);
     const isScrubbing = scrubbingRef.current;
     const shouldSnap = isScrubbing || timeJumpMs >= SNAP_TIME_JUMP_MS;
+    const shown = (group: RenderGroup) =>
+      visibleRef.current[group.constellationId] ?? true;
+    const snapKeys = snapKeysRef.current;
+    snapKeys.clear();
+    for (const group of activeGroups) {
+      const on = shown(group);
+      const was = wasShownRef.current.get(group.key);
+      if (on && was === false) snapKeys.add(group.key);
+      wasShownRef.current.set(group.key, on);
+    }
+
     const shouldPropagate =
       simTimeChanged &&
       (shouldSnap || now - lastPropagateRef.current >= PROPAGATE_INTERVAL_MS);
 
-    if (shouldPropagate) {
-      lastPropagateRef.current = now;
-      lastSimTimeRef.current = simTime;
+    if (shouldPropagate || snapKeys.size > 0) {
+      if (shouldPropagate) {
+        lastPropagateRef.current = now;
+        lastSimTimeRef.current = simTime;
+      }
       propagateDateRef.current.setTime(simTime);
 
+      let anyBlended = false;
       for (const group of activeGroups) {
-        if (!shouldSnap) {
+        if (!shown(group)) continue;
+        const snapThis = shouldSnap || snapKeys.has(group.key);
+        if (!shouldPropagate && !snapThis) continue;
+
+        if (!snapThis) {
           group.previous.set(group.target);
         }
         for (let i = 0; i < group.satellites.length; i += 1) {
@@ -222,13 +244,17 @@ export function SatelliteField({
             i,
           );
         }
-        if (shouldSnap) {
+        if (snapThis) {
           group.previous.set(group.target);
           group.display.set(group.target);
+        } else {
+          anyBlended = true;
         }
       }
 
-      blendRef.current = shouldSnap ? 1 : 0;
+      if (shouldPropagate) {
+        blendRef.current = shouldSnap || !anyBlended ? 1 : 0;
+      }
     }
 
     const blend = blendRef.current;
@@ -238,6 +264,7 @@ export function SatelliteField({
       blendRef.current = Math.min(1, blend + delta / (PROPAGATE_INTERVAL_MS / 1000));
 
       for (const group of activeGroups) {
+        if (!shown(group)) continue;
         lerpPositionBuffers(group.previous, group.target, group.display, blend);
       }
     }
@@ -267,6 +294,7 @@ export function SatelliteField({
 
     let sizeSettling = scaleTransitioning;
     for (const group of activeGroups) {
+      if (!shown(group)) continue;
       const node = pointsRefs.current.get(group.key) as THREE.Points | undefined;
       if (!node) continue;
       const material = node.material as THREE.PointsMaterial;
@@ -299,13 +327,14 @@ export function SatelliteField({
       }
     }
 
-    if (!isBlending && !shouldPropagate && !sizeSettling) return;
+    if (!isBlending && !shouldPropagate && snapKeys.size === 0 && !sizeSettling) return;
 
     for (const group of activeGroups) {
+      if (!shown(group)) continue;
       const node = pointsRefs.current.get(group.key) as THREE.Points | undefined;
       if (!node) continue;
 
-      if (isBlending || shouldPropagate) {
+      if (isBlending || shouldPropagate || snapKeys.has(group.key)) {
         const positionAttr = node.geometry.attributes.position;
         if (positionAttr) positionAttr.needsUpdate = true;
       }
