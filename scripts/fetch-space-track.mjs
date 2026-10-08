@@ -75,7 +75,7 @@ function catalogNumber(record) {
 /**
  * Same ids and file stems as src/lib/constellations.ts.
  * GPS, GLONASS, and weather use outside lists. Debris, rocket bodies, and
- * unknown come from the Space-Track catalog type.
+ * unknown come from the Space-Track catalog type. Other is everything left.
  */
 const workingLists = {
   gpsSvns: null,
@@ -160,6 +160,7 @@ const GROUPS = [
   { id: "weather", group: "weather", test: () => false },
   { id: "debris", group: "debris", test: () => false },
   { id: "rocket", group: "rocket", test: () => false },
+  { id: "other", group: "other", test: () => false },
   { id: "unknown", group: "unknown", test: () => false },
 ];
 
@@ -456,6 +457,7 @@ function assignGroups(records) {
     if (!group && !isDebrisOrRocket(name)) {
       group = GROUPS.find((candidate) => candidate.test(name, record));
     }
+    if (!group) group = GROUPS.find((candidate) => candidate.id === "other");
     if (!group) continue;
     const omm = normalizeOmm(record);
     if (!omm.NORAD_CAT_ID || !omm.OBJECT_NAME) continue;

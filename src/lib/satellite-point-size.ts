@@ -76,6 +76,7 @@ export function getSizeClass(
     constellationId === "globalstar" ||
     constellationId === "debris" ||
     constellationId === "rocket" ||
+    constellationId === "other" ||
     constellationId === "unknown"
   ) {
     return "mega";

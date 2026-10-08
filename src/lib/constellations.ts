@@ -111,6 +111,12 @@ export const CONSTELLATIONS: Constellation[] = [
     group: "rocket",
   },
   {
+    id: "other",
+    name: "Other",
+    color: "#e8b86d",
+    group: "other",
+  },
+  {
     id: "unknown",
     name: "Unknown",
     color: "#c4b5fd",

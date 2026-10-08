@@ -31,6 +31,7 @@ const FILES = [
   ["weather", "public/data/weather-fallback.json"],
   ["debris", "public/data/debris-fallback.json"],
   ["rocket", "public/data/rocket-fallback.json"],
+  ["other", "public/data/other-fallback.json"],
   ["unknown", "public/data/unknown-fallback.json"],
 ];
 

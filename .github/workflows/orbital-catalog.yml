@@ -135,6 +135,7 @@ jobs:
             public/data/spire-fallback.json
             public/data/starlink-fallback.json
             public/data/stations-fallback.json
+            public/data/other-fallback.json
             public/data/unknown-fallback.json
             public/data/weather-fallback.json
           )
@@ -163,6 +164,7 @@ jobs:
             -e '^public/data/spire-fallback.json$' \
             -e '^public/data/starlink-fallback.json$' \
             -e '^public/data/stations-fallback.json$' \
+            -e '^public/data/other-fallback.json$' \
             -e '^public/data/unknown-fallback.json$' \
             -e '^public/data/weather-fallback.json$' \
             || true)"
