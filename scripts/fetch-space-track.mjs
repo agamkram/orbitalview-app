@@ -28,6 +28,7 @@ const SATCAT_PATH = join(SCRATCH, "satcat.json");
 const WORKING_PATH = join(SCRATCH, "working.json");
 const WORKING_LIVE_PATH = join(ROOT, "public", "data", "working-lists.json");
 const GPS_STATUS_URL = "https://www.navcen.uscg.gov/gps-constellation";
+const GPS_OPS_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=gps-ops&FORMAT=json";
 const GLONASS_STATUS_URL = "https://glonass-iac.ru/upload/monitoring/cus";
 const WEATHER_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=json";
 const GROUP_DIR = join(SCRATCH, "groups");
@@ -84,6 +85,7 @@ function catalogNumber(record) {
  */
 const workingLists = {
   gpsSvns: null,
+  gpsIds: null,
   glonassCosmos: null,
   weatherIds: null,
   note: "working lists not loaded",
@@ -114,6 +116,8 @@ const GROUPS = [
     id: "gps",
     group: "gps-ops",
     test: (name, record) => {
+      const id = recordId(record);
+      if (workingLists.gpsIds?.size) return workingLists.gpsIds.has(id);
       const svn = navstarNumber(name);
       if (workingLists.gpsSvns) return svn != null && workingLists.gpsSvns.has(svn);
       const motion = meanMotion(record);
@@ -339,14 +343,16 @@ async function fetchText(url) {
   return response.text();
 }
 
-async function parseWorkingPayload(path, note) {
+async function parseWorkingPayload(path) {
   try {
     const saved = JSON.parse(await readFile(path, "utf8"));
     const gpsSvns = new Set(saved.gpsSvns || []);
+    const gpsIds = new Set((saved.gpsIds || []).map(String));
     const glonassCosmos = new Set(saved.glonassCosmos || []);
-    const weatherIds = new Set(saved.weatherIds || []);
-    if (gpsSvns.size < 24 || glonassCosmos.size < 18) return null;
-    return { gpsSvns, glonassCosmos, weatherIds, note };
+    const weatherIds = new Set((saved.weatherIds || []).map(String));
+    const hasGps = gpsIds.size >= 24 || gpsSvns.size >= 24;
+    if (!hasGps || glonassCosmos.size < 18) return null;
+    return { gpsSvns, gpsIds, glonassCosmos, weatherIds, fetchedAt: saved.fetchedAt };
   } catch {
     return null;
   }
@@ -354,59 +360,128 @@ async function parseWorkingPayload(path, note) {
 
 async function readWorkingFile() {
   return (
-    (await parseWorkingPayload(WORKING_PATH, "reused scratch working lists")) ||
-    (await parseWorkingPayload(WORKING_LIVE_PATH, "reused committed working lists"))
+    (await parseWorkingPayload(WORKING_PATH)) || (await parseWorkingPayload(WORKING_LIVE_PATH))
   );
+}
+
+async function loadGpsFromNavcen() {
+  const gpsHtml = await fetchText(GPS_STATUS_URL);
+  const gpsSvns = parseGpsSvns(gpsHtml);
+  if (gpsSvns.size < 24) throw new Error(`USCG GPS list has ${gpsSvns.size} satellites`);
+  return { gpsSvns, gpsIds: new Set(), source: `USCG GPS ${gpsSvns.size}` };
+}
+
+async function loadGpsFromCelestrak() {
+  const response = await fetch(GPS_OPS_URL, {
+    signal: AbortSignal.timeout(60_000),
+    headers: { "User-Agent": BROWSER_UA, Accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`CelesTrak gps-ops HTTP ${response.status}`);
+  const rows = await response.json();
+  const gpsIds = new Set();
+  for (const row of rows) {
+    const id = row.NORAD_CAT_ID ?? row.norad_cat_id;
+    if (id != null) gpsIds.add(String(id));
+  }
+  if (gpsIds.size < 24) throw new Error(`CelesTrak gps-ops has ${gpsIds.size} satellites`);
+  return { gpsSvns: new Set(), gpsIds, source: `CelesTrak GPS ${gpsIds.size}` };
+}
+
+async function loadGpsWorkingList(saved) {
+  const errors = [];
+  try {
+    return await loadGpsFromNavcen();
+  } catch (error) {
+    errors.push(error.message);
+  }
+  try {
+    return await loadGpsFromCelestrak();
+  } catch (error) {
+    errors.push(error.message);
+  }
+  if (saved?.gpsIds?.size >= 24 || saved?.gpsSvns?.size >= 24) {
+    return {
+      gpsSvns: saved.gpsSvns,
+      gpsIds: saved.gpsIds,
+      source: `saved GPS ${saved.gpsIds?.size || saved.gpsSvns.size}`,
+      reused: true,
+      error: errors.join("; "),
+    };
+  }
+  throw new Error(errors.join("; "));
+}
+
+async function loadGlonassWorkingList(saved) {
+  const errors = [];
+  for (const offset of [0, 1]) {
+    const stamp = moscowFileStamp(new Date(Date.now() - offset * 24 * 60 * 60 * 1000));
+    const url = `${GLONASS_STATUS_URL}/${stamp.year}/${stamp.mmdd}en.txt`;
+    try {
+      const glonassText = await fetchText(url);
+      const glonassCosmos = parseGlonassCosmos(glonassText);
+      if (glonassCosmos.size < 18) {
+        throw new Error(`GLONASS working list has ${glonassCosmos.size} satellites`);
+      }
+      return { glonassCosmos, source: `GLONASS IAC ${glonassCosmos.size}` };
+    } catch (error) {
+      errors.push(`${stamp.mmdd}: ${error.message}`);
+    }
+  }
+  if (saved?.glonassCosmos?.size >= 18) {
+    return {
+      glonassCosmos: saved.glonassCosmos,
+      source: `saved GLONASS ${saved.glonassCosmos.size}`,
+      reused: true,
+      error: errors.join("; "),
+    };
+  }
+  throw new Error(errors.join("; "));
+}
+
+async function loadWeatherWorkingList(saved) {
+  try {
+    const weatherIds = await loadWeatherIds();
+    return { weatherIds, source: `CelesTrak weather ${weatherIds.size}` };
+  } catch (error) {
+    if (saved?.weatherIds?.size >= 40) {
+      return {
+        weatherIds: saved.weatherIds,
+        source: `saved weather ${saved.weatherIds.size}`,
+        reused: true,
+        error: error.message,
+      };
+    }
+    throw error;
+  }
 }
 
 async function loadWorkingLists() {
   const saved = await readWorkingFile();
-  try {
-    const gpsHtml = await fetchText(GPS_STATUS_URL);
-    const gpsSvns = parseGpsSvns(gpsHtml);
-    if (gpsSvns.size < 24) throw new Error(`GPS working list has ${gpsSvns.size} satellites`);
+  const gps = await loadGpsWorkingList(saved);
+  const glonass = await loadGlonassWorkingList(saved);
+  const weather = await loadWeatherWorkingList(saved);
 
-    let glonassText = null;
-    const errors = [];
-    for (const offset of [0, 1]) {
-      const stamp = moscowFileStamp(new Date(Date.now() - offset * 24 * 60 * 60 * 1000));
-      const url = `${GLONASS_STATUS_URL}/${stamp.year}/${stamp.mmdd}en.txt`;
-      try {
-        glonassText = await fetchText(url);
-        break;
-      } catch (error) {
-        errors.push(`${stamp.mmdd}: ${error.message}`);
-      }
-    }
-    if (!glonassText) throw new Error(errors.join("; "));
-    const glonassCosmos = parseGlonassCosmos(glonassText);
-    if (glonassCosmos.size < 18) {
-      throw new Error(`GLONASS working list has ${glonassCosmos.size} satellites`);
-    }
-
-    const weatherIds = await loadWeatherIds();
-    const payload = {
-      fetchedAt: new Date().toISOString(),
-      gpsSvns: [...gpsSvns].sort((a, b) => a - b),
-      glonassCosmos: [...glonassCosmos].sort((a, b) => a - b),
-      weatherIds: [...weatherIds].sort(),
-    };
-    assertScratch(WORKING_PATH);
-    await writeFile(WORKING_PATH, JSON.stringify(payload, null, 2));
-    await writeFile(WORKING_LIVE_PATH, `${JSON.stringify(payload, null, 2)}\n`);
-    workingLists.gpsSvns = gpsSvns;
-    workingLists.glonassCosmos = glonassCosmos;
-    workingLists.weatherIds = weatherIds;
-    workingLists.note = `USCG GPS ${gpsSvns.size}, GLONASS IAC ${glonassCosmos.size}, CelesTrak weather ${weatherIds.size}`;
-    console.log(`Working lists: ${workingLists.note}`);
-  } catch (error) {
-    if (!saved) throw error;
-    workingLists.gpsSvns = saved.gpsSvns;
-    workingLists.glonassCosmos = saved.glonassCosmos;
-    workingLists.weatherIds = saved.weatherIds;
-    workingLists.note = `${saved.note} (${error.message})`;
-    console.warn(`Working list download failed. ${workingLists.note}`);
+  workingLists.gpsSvns = gps.gpsSvns;
+  workingLists.gpsIds = gps.gpsIds;
+  workingLists.glonassCosmos = glonass.glonassCosmos;
+  workingLists.weatherIds = weather.weatherIds;
+  workingLists.note = [gps.source, glonass.source, weather.source].join(", ");
+  for (const part of [gps, glonass, weather]) {
+    if (part.reused) console.warn(`Working list fallback: ${part.source} (${part.error})`);
   }
+  console.log(`Working lists: ${workingLists.note}`);
+
+  const payload = {
+    fetchedAt: new Date().toISOString(),
+    gpsSvns: [...gps.gpsSvns].sort((a, b) => a - b),
+    gpsIds: [...gps.gpsIds].sort((a, b) => Number(a) - Number(b)),
+    glonassCosmos: [...glonass.glonassCosmos].sort((a, b) => a - b),
+    weatherIds: [...weather.weatherIds].sort(),
+    sources: { gps: gps.source, glonass: glonass.source, weather: weather.source },
+  };
+  assertScratch(WORKING_PATH);
+  await writeFile(WORKING_PATH, JSON.stringify(payload, null, 2));
+  await writeFile(WORKING_LIVE_PATH, `${JSON.stringify(payload, null, 2)}\n`);
 }
 
 function isDebrisOrRocket(name) {
