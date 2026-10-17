@@ -26,6 +26,7 @@ const SCRATCH = join(ROOT, "scratch", "space-track");
 const RAW_PATH = join(SCRATCH, "gp.json");
 const SATCAT_PATH = join(SCRATCH, "satcat.json");
 const WORKING_PATH = join(SCRATCH, "working.json");
+const WORKING_LIVE_PATH = join(ROOT, "public", "data", "working-lists.json");
 const GPS_STATUS_URL = "https://www.navcen.uscg.gov/gps-constellation";
 const GLONASS_STATUS_URL = "https://glonass-iac.ru/upload/monitoring/cus";
 const WEATHER_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=json";
@@ -338,16 +339,24 @@ async function fetchText(url) {
   return response.text();
 }
 
-async function readWorkingFile() {
+async function parseWorkingPayload(path, note) {
   try {
-    const saved = JSON.parse(await readFile(WORKING_PATH, "utf8"));
+    const saved = JSON.parse(await readFile(path, "utf8"));
     const gpsSvns = new Set(saved.gpsSvns || []);
     const glonassCosmos = new Set(saved.glonassCosmos || []);
+    const weatherIds = new Set(saved.weatherIds || []);
     if (gpsSvns.size < 24 || glonassCosmos.size < 18) return null;
-    return { gpsSvns, glonassCosmos, note: "reused the saved working lists" };
+    return { gpsSvns, glonassCosmos, weatherIds, note };
   } catch {
     return null;
   }
+}
+
+async function readWorkingFile() {
+  return (
+    (await parseWorkingPayload(WORKING_PATH, "reused scratch working lists")) ||
+    (await parseWorkingPayload(WORKING_LIVE_PATH, "reused committed working lists"))
+  );
 }
 
 async function loadWorkingLists() {
@@ -384,6 +393,7 @@ async function loadWorkingLists() {
     };
     assertScratch(WORKING_PATH);
     await writeFile(WORKING_PATH, JSON.stringify(payload, null, 2));
+    await writeFile(WORKING_LIVE_PATH, `${JSON.stringify(payload, null, 2)}\n`);
     workingLists.gpsSvns = gpsSvns;
     workingLists.glonassCosmos = glonassCosmos;
     workingLists.weatherIds = weatherIds;

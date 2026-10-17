@@ -138,6 +138,7 @@ jobs:
             public/data/other-fallback.json
             public/data/unknown-fallback.json
             public/data/weather-fallback.json
+            public/data/working-lists.json
           )
 
           git add -- "${files[@]}"
@@ -167,6 +168,7 @@ jobs:
             -e '^public/data/other-fallback.json$' \
             -e '^public/data/unknown-fallback.json$' \
             -e '^public/data/weather-fallback.json$' \
+            -e '^public/data/working-lists.json$' \
             || true)"
           if [ -n "${extra}" ]; then
             echo "::error::Refusing to commit unexpected staged files:"
