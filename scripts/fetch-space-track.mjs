@@ -41,6 +41,10 @@ const SATCAT_URL =
 const TIMEOUT_MS = 180_000;
 const GP_REUSE_MS = 50 * 60 * 1000;
 const SATCAT_REUSE_MS = 20 * 60 * 60 * 1000;
+// Coast Guard NAVCEN blocks short/custom agents (HTTP 403). Use a normal
+// browser string for the public GPS / GLONASS / weather pages.
+const BROWSER_UA =
+  "Mozilla/5.0 (compatible; OrbitalView/1.0; +https://markmaga.com) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
 const OMM_KEYS = [
   "OBJECT_NAME",
@@ -328,9 +332,9 @@ function moscowFileStamp(date) {
 async function fetchText(url) {
   const response = await fetch(url, {
     signal: AbortSignal.timeout(30_000),
-    headers: { "User-Agent": "OrbitalView/1.0", Accept: "text/plain,text/html" },
+    headers: { "User-Agent": BROWSER_UA, Accept: "text/plain,text/html" },
   });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`${url} → HTTP ${response.status}`);
   return response.text();
 }
 
@@ -425,7 +429,7 @@ async function loadCatalogTypes() {
 async function loadWeatherIds() {
   const response = await fetch(WEATHER_URL, {
     signal: AbortSignal.timeout(60_000),
-    headers: { "User-Agent": "OrbitalView/1.0", Accept: "application/json" },
+    headers: { "User-Agent": BROWSER_UA, Accept: "application/json" },
   });
   if (!response.ok) throw new Error(`weather list HTTP ${response.status}`);
   const rows = await response.json();
