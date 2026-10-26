@@ -1,5 +1,5 @@
 {
-  "fetchedAt": "2026-10-25T17:06:22.213Z",
+  "fetchedAt": "2026-10-26T19:24:42.736Z",
   "gpsSvns": [],
   "gpsIds": [
     "26407",
@@ -137,8 +137,8 @@
     "65815"
   ],
   "sources": {
-    "gps": "saved GPS 32",
+    "gps": "CelesTrak GPS 32",
     "glonass": "GLONASS IAC 24",
-    "weather": "saved weather 73"
+    "weather": "CelesTrak weather 73"
   }
 }
